@@ -18,6 +18,6 @@ public class ConversationController {
 
     @PostMapping("generate")
     public String generate(@RequestBody ConversationRequest request) {
-        return llmService.generateResponse(request.prompt());
+        return llmService.generateResponse(request);
     }
 }
