@@ -14,6 +14,9 @@ import org.springframework.ai.chat.prompt.SystemPromptTemplate;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 @Slf4j
 public abstract class AbstractLLMService implements LLMService {
@@ -21,26 +24,38 @@ public abstract class AbstractLLMService implements LLMService {
     private ChatClient chatClient;
     private String usedModel;
 
+    private final ReadWriteLock lock = new ReentrantReadWriteLock();
+
     @Override
     public String generateResponse(ConversationRequest request) {
-        var envState = String.join(",", request.envInfo().values());
+        if (lock.writeLock().tryLock()) {
+            try {
+                System.out.println(request.envInfo());
+                var envState = request.envInfo().entrySet().stream()
+                        .map(e -> "%s: %s".formatted(e.getKey(), e.getValue()))
+                        .collect(Collectors.joining("\n"));
 
-        final var systemPromptTemplate = getSystemPromptTemplate();
-        var systemMessage = systemPromptTemplate.createMessage(Map.of(
-                "name", "Борис",
-                "mood", "веселый",
-                "profession", "фермер",
-                "character", "хитрый",
-                "env_state", envState
-        ));
-        var userMessage = new UserMessage(request.message());
-        var prompt = new Prompt(List.of(systemMessage, userMessage));
-        chatModel().getDefaultOptions().getModel();
-        log.debug("Calling [{}] for conversation with id=[{}]", usedModel, request.conversationId());
-        return chatClient.prompt(prompt)
-                .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, request.conversationId()))
-                .call()
-                .content();
+                final var systemPromptTemplate = getSystemPromptTemplate();
+                var systemMessage = systemPromptTemplate.createMessage(Map.of(
+                        "name", "Борис",
+                        "mood", request.mood(),
+                        "profession", "фермер",
+                        "character", "хитрый",
+                        "env_state", envState
+                ));
+                var userMessage = new UserMessage(request.message());
+                var prompt = new Prompt(List.of(systemMessage, userMessage));
+                chatModel().getDefaultOptions().getModel();
+                log.debug("Calling [{}] for conversation with id=[{}]", usedModel, request.conversationId());
+                return chatClient.prompt(prompt)
+                        .advisors(a -> a.param(ChatMemory.CONVERSATION_ID, request.conversationId()))
+                        .call()
+                        .content();
+            } finally {
+                lock.writeLock().unlock();
+            }
+        }
+        return "";
     }
 
     @PostConstruct
@@ -67,7 +82,8 @@ public abstract class AbstractLLMService implements LLMService {
                 КОНТЕКСТ:
                 Настроение: {mood}
                 Характер: {character}
-                Окружение: {env_state}
+                Окружение:
+                {env_state}
                 
                 ЗАДАНИЯ:
                 Можешь давать простые задания связанные с твоей профессией:
